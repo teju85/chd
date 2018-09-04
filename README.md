@@ -21,5 +21,5 @@ out this initial value for each bucket. Later, I'll write a nice output format
 to it!
 
 # References
-[1]. Jenkin's hash by Bob Jenkins: http://burtleburtle.net/bob/hash/doobs.html
-[2]. CHD paper: http://cmph.sourceforge.net/papers/esa09.pdf
+1. Jenkin's hash by Bob Jenkins: http://burtleburtle.net/bob/hash/doobs.html
+2. CHD paper: http://cmph.sourceforge.net/papers/esa09.pdf
