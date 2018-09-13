@@ -25,15 +25,19 @@
 
 void printHelp() {
     printf("USAGE:\n");
-    printf("  chd [-h] [-l <lambda>] [-a <alpha>] <keysFile>\n");
+    printf("  chd [-h, v] [-l <lambda>] [-a <alpha>] [-o <outFile>] <keysFile>\n");
     printf("OPTIONS:\n");
     printf("  -h           Print this help and exit\n");
     printf("  -l <lambda>  Load factor. The same variable as in the paper.\n");
     printf("  -a <alpha>   Leeway. The same variable as in the CHD-paper.\n");
+    printf("  -o <outFile> Output file containing computed hash function.\n");
+    printf("  -v           Be verbose while computing hash functions.\n");
     printf("  <keysFile>   Vocabulary file [mandatory!]\n");
     printf("Format of <keysFile>:\n");
     printf("Each line contains a word that's part of the vocabulary. Currently\n"
            "only plain ascii strings are supported.\n");
+    printf("Format of <outFile>:\n");
+    printf("Each line contains bucket-id and it's init value for hash function\n");
 }
 
 std::string readWord(FILE* fp) {
@@ -140,6 +144,7 @@ int hashMod(const char* str, size_t len, uint32_t initval, int mod) {
 struct Bucket {
     int bId;
     std::vector<int> keyIds;
+    uint32_t lval;
 };
 
 bool compare(const Bucket& a, const Bucket& b) {
@@ -151,20 +156,61 @@ typedef std::vector<Bucket> Buckets;
 Buckets getBuckets(const std::vector<std::string>& keys, int R) {
     Buckets ret(R);
     int i = 0;
+    for(auto& itr : ret) {
+        itr.bId = i;
+        ++i;
+    }
+    i = 0;
     for(const auto& k : keys) {
         int bId = hashMod(k.c_str(), k.size(), 0, R);
-        ret[bId].bId = bId;
         ret[bId].keyIds.push_back(i);
+        ret[bId].lval = 0U;
         ++i;
     }
     std::sort(ret.begin(), ret.end(), compare);
     return ret;
 }
 
+void computePH(Buckets& buckets, bool* T, int n, int m, int r,
+               const std::vector<std::string>& keys, bool verbose) {
+    for(auto& itr : buckets) {
+        if(verbose) {
+            printf("  Trying for bucket=%d ...", itr.bId);
+            fflush(stdout);
+        }
+        int len = (int)itr.keyIds.size();
+        uint32_t l = 1;
+        for(uint32_t l=1;;++l) {
+            bool found = true;
+            for(auto kid : itr.keyIds) {
+                int idx = hashMod(keys[kid].c_str(), keys[kid].size(), l, m);
+                if(T[idx]) {
+                    found = false;
+                    break;
+                }
+            }
+            if(found) {
+                itr.lval = l;
+                for(auto kid : itr.keyIds) {
+                    int idx = hashMod(keys[kid].c_str(), keys[kid].size(), l, m);
+                    T[idx] = true;
+                }
+                if(verbose) {
+                    printf(" Found l=%d\n", l);
+                    fflush(stdout);
+                }
+                break;
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     char* keysFile = nullptr;
+    char* outFile = nullptr;
     float lambda = 5.f;
     float alpha = 1.f;
+    bool verbose = false;
     for(int i=1;i<argc;++i) {
         if(!strcmp("-h", argv[i])) {
             printHelp();
@@ -177,12 +223,18 @@ int main(int argc, char** argv) {
             ++i;
             ASSERT(i < argc, "'-a' expects an argument!");
             alpha = atof(argv[i]);
+        } else if(!strcmp("-o", argv[i])) {
+            ++i;
+            ASSERT(i < argc, "'-o' expects an argument!");
+            outFile = argv[i];
+        } else if(!strcmp("-v", argv[i])) {
+            verbose = true;
         } else {
             keysFile = argv[i];
         }
     }
     ASSERT(keysFile != nullptr, "<keysFile> is mandatory!");
-    ASSERT(lambda >= 1.f && lambda <= 8.f, "'-l' must be between 1.0 & 8.0!");
+    ASSERT(lambda >= 1.f, "'-l' must be greater than 1.0!");
     ASSERT(alpha >= 0.01f && alpha <= 1.f, "'-a' must be between 0.01 & 1.0!");
     auto keys = readAllKeys(keysFile);
     int n = (int)keys.size();
@@ -191,38 +243,22 @@ int main(int argc, char** argv) {
     int m = n / alpha;
     printf("Getting buckets r=%d m=%d n=%d...\n", r, m, n);
     auto buckets = getBuckets(keys, r);
-    printf("Initializing T...\n");
+    printf("Initializing T array...\n");
     bool* T = new bool[m];
     for(int i=0;i<m;++i) {
         T[i] = false;
     }
     printf("Creating CHD...\n");
-    std::vector<int> hids(r);
-    for(auto& itr : buckets) {
-        printf("  Trying for bucket=%d ...\n", itr.bId);
-        int len = (int)itr.keyIds.size();
-        uint32_t l = 1;
-        while(true) {
-            bool found = true;
-            for(auto kid : itr.keyIds) {
-                int idx = hashMod(keys[kid].c_str(), keys[kid].size(), l, m);
-                if(T[idx]) {
-                    found = false;
-                    break;
-                }
-            }
-            if(found) {
-                hids[itr.bId] = l;
-                for(auto kid : itr.keyIds) {
-                    int idx = hashMod(keys[kid].c_str(), keys[kid].size(), l, m);
-                    T[idx] = true;
-                }
-                printf("    Found l=%d\n", l);
-                break;
-            }
-            ++l;
-        }
-    }
+    computePH(buckets, T, n, m, r, keys, verbose);
     delete [] T;
+    if(outFile != nullptr) {
+        printf("Storing perfect hash...\n");
+        FILE* fp = fopen(outFile, "w");
+        ASSERT(fp != nullptr, "Failed to open out file '%s'!", outFile);
+        for(auto& itr : buckets) {
+            fprintf(fp, "%d %u\n", itr.bId, itr.lval);
+        }
+        fclose(fp);
+    }
     return 0;
 }
