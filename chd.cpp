@@ -23,16 +23,23 @@
         if(!(check))  THROW(fmt, ##__VA_ARGS__); \
     } while(0)
 
+enum HashAlgo {
+    HashJenkins,
+    HashDjb
+};
+
 void printHelp() {
     printf("USAGE:\n");
-    printf("  chd [-h, v] [-l <lambda>] [-a <alpha>] [-o <outFile>] <keysFile>\n");
+    printf("  chd [-h, v] [-l <lambda>] [-a <alpha>] [-o <outFile>] \n"
+           "      [-f <hashFunc>] <keysFile>\n");
     printf("OPTIONS:\n");
-    printf("  -h           Print this help and exit\n");
-    printf("  -l <lambda>  Load factor. The same variable as in the paper.\n");
-    printf("  -a <alpha>   Leeway. The same variable as in the CHD-paper.\n");
-    printf("  -o <outFile> Output file containing computed hash function.\n");
-    printf("  -v           Be verbose while computing hash functions.\n");
-    printf("  <keysFile>   Vocabulary file [mandatory!]\n");
+    printf("  -h             Print this help and exit\n");
+    printf("  -f <hashFunc>  Hash function to use. Options are: jenkins, djb\n");
+    printf("  -l <lambda>    Load factor. The same variable as in the paper.\n");
+    printf("  -a <alpha>     Leeway. The same variable as in the CHD-paper.\n");
+    printf("  -o <outFile>   Output file containing computed hash function.\n");
+    printf("  -v             Be verbose while computing hash functions.\n");
+    printf("  <keysFile>     Vocabulary file [mandatory!]\n");
     printf("Format of <keysFile>:\n");
     printf("Each line contains a word that's part of the vocabulary. Currently\n"
            "only plain ascii strings are supported.\n");
@@ -108,8 +115,8 @@ uint32_t get(const char* k, int len) {
     return ret;
 }
 
-void hashWord(const char* key, size_t len, uint32_t init,
-              uint32_t& a, uint32_t& b, uint32_t& c) {
+void hashJenkins(const char* key, size_t len, uint32_t init,
+                 uint32_t& a, uint32_t& b, uint32_t& c) {
     a = b = c = init;
     const char* k = key;
     while(len >= 12) {
@@ -135,9 +142,27 @@ void hashWord(const char* key, size_t len, uint32_t init,
     finalMix(a, b, c);
 }
 
-int hashMod(const char* str, size_t len, uint32_t initval, int mod) {
+void hashDjb(const char* key, size_t len, uint32_t init,
+             uint32_t& a, uint32_t& b, uint32_t& c) {
+    a = b = c = init;
+    for(size_t i=0;i<len;++i)
+        c += (c << 5) + key[i];
+}
+
+void hashWord(HashAlgo algo, const char* key, size_t len, uint32_t init,
+              uint32_t& a, uint32_t& b, uint32_t& c) {
+    if(algo == HashJenkins)
+        hashJenkins(key, len, init, a, b, c);
+    else if(algo == HashDjb)
+        hashDjb(key, len, init, a, b, c);
+    else
+        ASSERT(false, "Invalid hash function!");
+}
+
+int hashMod(HashAlgo algo, const char* str, size_t len, uint32_t initval,
+            int mod) {
     uint32_t a, b, c;
-    hashWord(str, len, initval, a, b, c);
+    hashWord(algo, str, len, initval, a, b, c);
     return c % mod;
 }
 
@@ -153,7 +178,7 @@ bool compare(const Bucket& a, const Bucket& b) {
 
 typedef std::vector<Bucket> Buckets;
 
-Buckets getBuckets(const std::vector<std::string>& keys, int R) {
+Buckets getBuckets(const std::vector<std::string>& keys, int R, HashAlgo algo) {
     Buckets ret(R);
     int i = 0;
     for(auto& itr : ret) {
@@ -162,7 +187,7 @@ Buckets getBuckets(const std::vector<std::string>& keys, int R) {
     }
     i = 0;
     for(const auto& k : keys) {
-        int bId = hashMod(k.c_str(), k.size(), 0, R);
+        int bId = hashMod(algo, k.c_str(), k.size(), 0, R);
         ret[bId].keyIds.push_back(i);
         ret[bId].lval = 0U;
         ++i;
@@ -171,7 +196,7 @@ Buckets getBuckets(const std::vector<std::string>& keys, int R) {
     return ret;
 }
 
-void computePH(Buckets& buckets, bool* T, int n, int m, int r,
+void computePH(Buckets& buckets, bool* T, int n, int m, int r, HashAlgo algo,
                const std::vector<std::string>& keys, bool verbose) {
     for(auto& itr : buckets) {
         if(verbose) {
@@ -183,7 +208,7 @@ void computePH(Buckets& buckets, bool* T, int n, int m, int r,
         for(uint32_t l=1;;++l) {
             bool found = true;
             for(auto kid : itr.keyIds) {
-                int idx = hashMod(keys[kid].c_str(), keys[kid].size(), l, m);
+                int idx = hashMod(algo, keys[kid].c_str(), keys[kid].size(), l, m);
                 if(T[idx]) {
                     found = false;
                     break;
@@ -192,7 +217,7 @@ void computePH(Buckets& buckets, bool* T, int n, int m, int r,
             if(found) {
                 itr.lval = l;
                 for(auto kid : itr.keyIds) {
-                    int idx = hashMod(keys[kid].c_str(), keys[kid].size(), l, m);
+                    int idx = hashMod(algo, keys[kid].c_str(), keys[kid].size(), l, m);
                     T[idx] = true;
                 }
                 if(verbose) {
@@ -211,6 +236,7 @@ int main(int argc, char** argv) {
     float lambda = 5.f;
     float alpha = 1.f;
     bool verbose = false;
+    HashAlgo algo = HashJenkins;
     for(int i=1;i<argc;++i) {
         if(!strcmp("-h", argv[i])) {
             printHelp();
@@ -229,6 +255,16 @@ int main(int argc, char** argv) {
             outFile = argv[i];
         } else if(!strcmp("-v", argv[i])) {
             verbose = true;
+        } else if(!strcmp("-f", argv[i])) {
+            ++i;
+            ASSERT(i < argc, "'-f' expects an argument!");
+            if(!strcmp("jenkins", argv[i])) {
+                algo = HashJenkins;
+            } else if(!strcmp("djb", argv[i])) {
+                algo = HashDjb;
+            } else {
+                ASSERT(false, "'-f': Invalid hash function '%s'", argv[i]);
+            }
         } else {
             keysFile = argv[i];
         }
@@ -242,14 +278,14 @@ int main(int argc, char** argv) {
     int r = n / lambda;
     int m = n / alpha;
     printf("Getting buckets r=%d m=%d n=%d...\n", r, m, n);
-    auto buckets = getBuckets(keys, r);
+    auto buckets = getBuckets(keys, r, algo);
     printf("Initializing T array...\n");
     bool* T = new bool[m];
     for(int i=0;i<m;++i) {
         T[i] = false;
     }
     printf("Creating CHD...\n");
-    computePH(buckets, T, n, m, r, keys, verbose);
+    computePH(buckets, T, n, m, r, algo, keys, verbose);
     delete [] T;
     if(outFile != nullptr) {
         printf("Storing perfect hash...\n");
