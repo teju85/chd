@@ -5,6 +5,8 @@
 #include <vector>
 #include <stdint.h>
 #include <algorithm>
+#include <chrono>
+
 
 #define THROW(fmt, ...)                                         \
     do {                                                        \
@@ -285,7 +287,12 @@ int main(int argc, char** argv) {
         T[i] = false;
     }
     printf("Creating CHD...\n");
+    auto start = std::chrono::steady_clock::now();
     computePH(buckets, T, n, m, r, algo, keys, verbose);
+    auto end = std::chrono::steady_clock::now();
+    auto diff = end - start;
+    printf("PH generation (r,m,n=%d,%d,%d) took %lfs\n", r, m, n,
+           std::chrono::duration<double>(diff).count());
     delete [] T;
     if(outFile != nullptr) {
         printf("Storing perfect hash...\n");

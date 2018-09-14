@@ -11,6 +11,11 @@ make chd
 ```
 Builds a 'chd' executable. Use '-h' option to this exe to know about its usage.
 
+# Benchmarking
+```bash
+./benchmark path/to/keysFile
+```
+
 # Info
 This project uses Jenkin's hash [1] along with the CHD algo [2] in order to construct
 perfect hashes for a given set of vocabulary. Currently, the vocabulary set is
